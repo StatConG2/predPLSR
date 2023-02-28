@@ -1,0 +1,672 @@
+---
+title: "predPLSR"
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+    logo: logo.png
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(MASS)
+library(caret)
+library(tidyverse)
+library(dplyr)
+library(DT)
+library(shiny)
+library(shinydashboard)
+library(Hmisc)
+library(shinyWidgets)
+library(GGally)
+library(patchwork)
+
+```
+
+
+Summary {data-orientation=rows}
+======================================================================
+
+Column {.sidebar data.width=300 .box }
+-------------
+
+*Data - Upload*
+
+
+```{r}
+
+options(shiny.maxRequestSize=30*1024^2)
+
+      fileInput("file1", "Choose Train CSV File",
+                      multiple = FALSE,
+                      accept = c("text/csv",
+                               "text/comma-separated-values,text/plain",
+                               ".csv"))
+      
+      fileInput("file2", "Choose Test CSV File",
+                      multiple = FALSE,
+                      accept = c("text/csv",
+                               "text/comma-separated-values,text/plain",
+                               ".csv"))
+      
+      dfTrain <- reactive({
+        req(input$file1)
+        read_csv(input$file1$datapath)
+      })
+      
+      dfTest <- reactive({
+        req(input$file2)
+        read_csv(input$file2$datapath)
+      })
+
+
+```
+
+Row {data-height=100}
+-----------------------------------------------------------------------
+
+### Trainset Size
+
+```{r}
+renderValueBox({
+trainSize <- nrow(dfTrain())
+valueBox(trainSize, " ")
+})
+```
+
+
+### Testset Size
+
+```{r}
+renderValueBox({
+testSize <- nrow(dfTest())
+valueBox(testSize, " ")
+})
+```
+
+### No of Replicates
+```{r}
+renderValueBox({
+no.rep <- length(unique(dfTrain()$rep))
+valueBox(no.rep, " ")
+})
+```
+
+### Dependent Variable
+```{r}
+renderValueBox({
+  valueBox("Melamine Concentration" , " ")
+})
+```
+
+### Independent Variables
+
+```{r}
+renderValueBox({
+  valueBox("Absorbances correspond to wave numbers", " ")
+})
+```
+
+Row 
+--------------------------------------------------------
+
+### Trainset melamine concentration composition
+
+```{r}
+
+renderPlot({
+
+  melamine <- unique(dfTrain()$mel.concentration)
+  animalMix <- 100 - melamine
+  concentraion <- melamine
+  
+  data <- data.frame(concentraion, melamine, animalMix)
+  
+  data <- data %>%
+    pivot_longer(2:3, names_to = "element", values_to = "value") %>%
+    arrange(desc(concentraion)) 
+  
+  data <- data[data$element == "melamine",]
+  
+  data <- data[data$value != 0,]
+  
+  data <- data[data$value != 100,]
+  
+  data$concentraion <- paste0(rep("con",times=nrow(data)),1:nrow(data))
+  
+  data1 <- data %>% arrange(value) %>%  
+    mutate(concentraion = concentraion %>% as_factor %>% fct_inorder) 
+  
+  ggplot(data1, aes(fill=element, y=value, x=concentraion)) + 
+    geom_col() +
+    coord_flip()+
+    ylab("Melamine content (%)")+
+    xlab("")+
+    theme(legend.position = "") +
+    scale_fill_manual(values = "#0d98ba")
+})
+
+```
+
+
+### Testset melamine concentration composition
+
+```{r}
+renderPlot({
+  melamine <- unique(dfTest()$mel.concentration)
+  animalMix <- 100 - melamine
+  concentraion <- melamine
+  
+  data <- data.frame(concentraion, melamine, animalMix)
+  
+  data <- data %>%
+    pivot_longer(2:3, names_to = "element", values_to = "value") %>%
+    arrange(desc(concentraion)) 
+  
+  data <- data[data$element == "melamine",]
+  
+  data <- data[data$value != c(0, 100),]
+  
+  data$concentraion <- paste0(rep("con",times=nrow(data)),1:nrow(data))
+  
+  data1 <- data %>% arrange(value) %>%  
+    mutate(concentraion = concentraion %>% as_factor %>% fct_inorder) 
+  
+  ggplot(data1, aes(fill=element, y=value, x=concentraion)) + 
+    geom_col() +
+    coord_flip()+
+    ylab("Melamine content (%)")+
+    xlab("")+
+    theme(legend.position = "")+
+    scale_fill_manual(values = "pink")
+})
+
+
+```
+
+
+Spectrum plots
+=========
+
+Column {.sidebar data.width=300 .box }
+-------------
+
+```{r}
+renderUI({
+  df_new <- dfTrain()[dfTrain()$mel.concentration != 0, ]
+  df_new <- df_new[df_new$mel.concentration != 100, ]
+selectInput("select_con","Choose Concentration", choices = sort(unique(df_new$mel.concentration)))
+})
+```
+
+Column {.tabset}
+-------------------------------------
+   
+### Pure Melamine
+
+```{r}
+
+renderPlot({
+  melamine_con1 <- dfTrain()[dfTrain()$mel.concentration == 100, ]
+  melamine_con1 <- melamine_con1[, c(-1, -2)]
+  col.num <- ncol(melamine_con1)
+  melamine_con1 <- melamine_con1 %>% pivot_longer(2:col.num, names_to = "wave_num", values_to = "abs" )
+  melamine_con1$wave_num <- as.numeric(melamine_con1$wave_num)
+  ggplot(data = melamine_con1, aes(x=wave_num, y=abs, col=rep)) +
+    geom_line() +
+    xlab(bquote("Wave Number " (cm ^ -1))) +
+    ylab("Absorbance") +
+    ggtitle("Pure Melamine Mix") +
+    theme(legend.position = "bottom") +
+    labs(color = "Replicate")
+  
+})
+
+```   
+ 
+### Pure Animal Mix
+    
+```{r}
+renderPlot({
+  melamine_con1 <- dfTrain()[dfTrain()$mel.concentration == 0, ]
+  melamine_con1 <- melamine_con1[, c(-1, -2)]
+  col.num <- ncol(melamine_con1)
+  melamine_con1 <- melamine_con1 %>% pivot_longer(2:col.num, names_to = "wave_num", values_to = "abs" )
+  melamine_con1$wave_num <- as.numeric(melamine_con1$wave_num)
+  ggplot(data = melamine_con1, aes(x=wave_num, y=abs, col=rep)) +
+    geom_line() +
+    xlab(bquote("Wave Number " (cm ^ -1))) +
+    ylab("Absorbance") +
+    ggtitle("Pure Animal Mix") +
+    theme(legend.position = "bottom") +
+    labs(color = "Replicate")
+})
+
+```
+
+### Melamine concentration on choice
+    
+```{r}
+
+renderPlot({
+  melamine_con1 <- dfTrain()[dfTrain()$mel.concentration == input$select_con, ]
+  melamine_con1 <- melamine_con1[, c(-1, -2)]
+  col.num <- ncol(melamine_con1)
+  melamine_con1 <- melamine_con1 %>% pivot_longer(2:col.num, names_to = "wave_num", values_to = "abs" )
+  melamine_con1$wave_num <- as.numeric(melamine_con1$wave_num)
+  ggplot(data = melamine_con1, aes(x=wave_num, y=abs, col=rep)) +
+    geom_line() +
+    xlab(bquote("Wave Number " (cm ^ -1))) +
+    ylab("Absorbance") +
+    theme(legend.position = "bottom") +
+    labs(color = "Replicate")
+})
+
+```
+
+Model Details {data-orientation=columns}
+=====
+
+Column {.sidebar data.width=300 .box }
+-------------
+
+
+```{r}
+
+      sliderInput("peakRange", "Select the wave number range",  min = 450, max=5500, value = c(3400,3500), step = 100)
+      
+      
+      minRange <- reactive({
+        req(input$peakRange[1])
+      })
+      
+       maxRange <- reactive({
+        req(input$peakRange[2])
+      })
+
+
+```
+
+
+Column {data-width=450}
+------
+
+### Model Description
+
+```{r}
+
+renderPrint({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+
+model
+
+})
+
+```
+
+
+column {data-width=500}
+------
+
+### Scree plot
+
+```{r}
+renderPlot({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+plot(model)
+
+})
+```
+
+Predictions {data-orientation=columns}
+=====
+
+Column {.sidebar data.width=300 .box }
+-------------
+
+
+```{r}
+
+      sliderInput("peakRange", "Select the wave number range",  min = 450, max=5500, value = c(3400,3500), step = 100)
+      
+      
+      minRange <- reactive({
+        req(input$peakRange[1])
+      })
+      
+       maxRange <- reactive({
+        req(input$peakRange[2])
+      })
+
+
+```
+
+Column {data-width=450}
+------
+
+### RMSE
+
+```{r}
+renderValueBox({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+
+# calculate RMSE
+rmse <- round(sqrt(mean((pls_pred.test - concentration.test[,1,drop=TRUE])^2)), digits = 3)
+valueBox(rmse, "RMSE")
+
+})
+
+```
+
+### Actual Vs. Predicted
+  
+```{r}
+renderPlot({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+
+df <- data.frame(actual = concentration.test[,1,drop=TRUE], predicted = pls_pred.test)
+
+# Plot actual vs predictions
+ggplot(df,aes(actual, predicted)) +
+  stat_summary(fun.data=mean_cl_normal) + 
+  geom_smooth(method='lm', formula= y~x, color = "red") +
+  labs(x = "Actual Concentration", y = "Predicted Concentration")
+})
+
+
+```
+
+
+column {data-width=400}
+------
+
+### R squared
+
+```{r}
+renderGauge({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+
+rsq <- cor(concentration.test, pls_pred.test) ^ 2
+gauge(rsq*100, min = 0, max = 100,
+      gaugeSectors(success = c(70,100),
+                   warning = c(40,69),
+                   danger = c(0,39)))
+
+})
+
+
+renderText({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+
+rsq <- cor(concentration.test, pls_pred.test) ^ 2
+
+paste("Model explians", round(rsq*100, digits=3),"% of the total variability of the Melamine concentration.")
+})
+```
+
+### Download Actual and Predicted Concentrations
+
+```{r}
+
+renderDataTable({
+  
+  trainData <- dfTrain()[dfTrain()$mel.concentration != 100.00, ]
+  trainData1 <- trainData[, c(-1,-3)]
+  trainData2 <- trainData1[, c(1, (minRange()-448):(maxRange()-448))]
+
+  testData1 <- dfTest()[, c(-1,-3)]
+  testData2 <- testData1[, c(1, (minRange()-448):(maxRange()-448))]
+  
+  test.features <- testData2[, c(-1)]
+  concentration.test <- testData2[, c(1)]
+  
+  pls.n <- length(unique(dfTrain()$mel.concentration)) + 5
+  
+  set.seed(1)
+
+ctrl <- trainControl(
+  method = "LOOCV",
+  number = 10,
+)
+
+
+
+model <- train(
+  mel.concentration ~ .,
+  data = trainData2,
+  method = 'pls',
+  trControl = ctrl,
+  tuneLength = pls.n
+)
+
+# Predictions
+pls_pred.test <- predict(model, newdata = test.features)
+
+df <- data.frame('actual' = concentration.test[,1,drop=TRUE], 'predicted' = pls_pred.test)
+
+datatable(
+  df, extensions ='Buttons', options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+  )
+)
+
+})
+
+```
+
+About {data-orientation=columns}
+======================================================================
+This dashboard was created to ease out the PLSR analysis for spectrum data. Dashboard is built with R using the R Markdown framework.
+
+
+**Created by**
+
+Kavya Atapattu, Thejaka Hewakuruppu, Savindu Kodikara, Madhusha Perera, Udeshi Salgado, Anjana Senadeera, Department of Statistics, University of Sri Jayewardenepura
+
+[Thiyanga S. Talagala](https://thiyanga.netlify.app/), Department of Statistics, University of Sri Jayewardenepura (Project supervisor)
+
+**Code**
+
+The code behind the dashboard is available on [GitHub](https://github.com/StatConG2/predPLSR).
+
+
+Coulumn {data-height=800}
+-----------------------------------------------------------------------
+
+
+**Data**
+
+To proceed with the analysis data should be in the the following format given in Figure 01.
+
+```{r, fig.cap="Figure 01: Data format", fig.align = 'center'}
+knitr::include_graphics ("data.jpg")
+
+```
+
+
+**Citation**
+
+Talagala T., Atapattu A. M. K. N., Hewakuruppu D. T., Kodikara S. V., Perera M. M. I., Salgado M. U. P., Senadeera B. S. A. (2023). predPLSR. Statistical Consultancy Services, Department of Statistics, USJ. https://github.com/StatConG2/predPLSR
